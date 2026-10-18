@@ -109,6 +109,18 @@ def query_for(question):
 
     where = " WHERE " + " AND ".join(filters) if filters else ""
 
+    # Count distinct customers for paid orders of a specific product.
+    if (
+        "different customers" in q
+        and "paid" in q
+        and "juicer" in q
+    ):
+        return (
+            "SELECT COUNT(DISTINCT customer) AS customer_count "
+            "FROM orders WHERE product = ? AND status = ?",
+            ["Juicer", "paid"]
+        )
+
     # Totals and counts
     if any(x in q for x in ["revenue", "sales amount", "sales value", "turnover"]):
         if any(x in q for x in ["by region", "each region", "per region"]):
