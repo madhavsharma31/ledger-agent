@@ -170,6 +170,46 @@ def query_for(question):
         ])
         params.extend([start, end])
 
+    
+    # Recognize month names such as "February 2026".
+    month_names = {
+        name.lower(): number
+        for number, name in enumerate(calendar.month_name)
+        if name
+    }
+    month_names.update({
+        name.lower(): number
+        for number, name in enumerate(calendar.month_abbr)
+        if name
+    })
+
+    named_month = re.search(
+        r"\b(" + "|".join(
+            sorted(month_names.keys(), key=len, reverse=True)
+        ) + r")\s+(202[5-7])\b",
+        q,
+    )
+
+    if named_month and not date_match:
+        month_num = month_names[named_month.group(1)]
+        year = int(named_month.group(2))
+
+        start = f"{year:04d}-{month_num:02d}-01T00:00:00"
+
+        if month_num == 12:
+            end = f"{year + 1:04d}-01-01T00:00:00"
+        else:
+            end = (
+                f"{year:04d}-{month_num + 1:02d}-01T00:00:00"
+            )
+
+        filters.extend([
+            "created_at_ist >= ?",
+            "created_at_ist < ?",
+        ])
+        params.extend([start, end])
+
+
     where = " WHERE " + " AND ".join(filters) if filters else ""
 
     # Distinct customers must be checked before generic count questions.
@@ -338,11 +378,67 @@ def query_for(question):
         )
 
     # Status-specific counts.
+    
+    # Refunded orders: preserve region, product, customer and date filters.
     if "refunded" in q or "refund" in q:
+        refund_filters = filters.copy()
+        refund_params = params.copy()
+
+        # Ensure we count only refunded orders.
+        refund_filters = [
+            f for f in refund_filters if not f.startswith("status =")
+        ]
+        refund_params = [
+            value for f, value in zip(filters, params)
+            if not f.startswith("status =")
+        ]
+
+        refund_filters.append("status = ?")
+        refund_params.append("refunded")
+
+        refund_where = " WHERE " + " AND ".join(refund_filters)
+
         return (
-            "SELECT COUNT(*) AS refunded_orders FROM orders" + where,
+            "SELECT COUNT(*) AS refunded_orders FROM orders"
+            + refund_where,
+            refund_params,
+        )
+
+    if any(x in q for x in ["void", "cancelled", "canceled"]):
+        void_filters = [
+            f for f in filters if not f.startswith("status =")
+        ]
+        void_params = [
+            value for f, value in zip(filters, params)
+            if not f.startswith("status =")
+        ]
+
+        void_filters.append("status = ?")
+        void_params.append("void")
+
+        return (
+            "SELECT COUNT(*) AS void_orders FROM orders WHERE "
+            + " AND ".join(void_filters),
+            void_params,
+        )
+
+    if "status" in q:
+        return (
+            "SELECT status, COUNT(*) AS count FROM orders"
+            + where
+            + " GROUP BY status ORDER BY status",
             params,
         )
+
+    # Generic count questions.
+    if any(x in q for x in [
+        "how many", "number of", "count", "total orders"
+    ]):
+        return (
+            "SELECT COUNT(*) AS order_count FROM orders" + where,
+            params,
+        )
+
 
     if any(x in q for x in ["void", "cancelled", "canceled"]):
         return (
